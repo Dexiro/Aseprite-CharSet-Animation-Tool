@@ -1,2 +1,2 @@
 # Aseprite CharSet Animation Tool
- 
+

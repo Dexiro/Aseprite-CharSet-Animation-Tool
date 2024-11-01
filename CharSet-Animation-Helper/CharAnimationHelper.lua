@@ -263,5 +263,4 @@ dialog:newrow()
 dialog:button{id="btndothing2", text="CharSet -> Timeline", onclick=CharSetToTimeline_Transaction}
 dialog:show{wait=false}
 _dialogResetBounds = Rectangle(dialog.bounds.x, dialog.bounds.y, dialog.bounds.width, dialog.bounds.height)
-CheckSelectionArea()
 RepaintDialog()

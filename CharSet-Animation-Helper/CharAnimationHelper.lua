@@ -181,7 +181,7 @@ function CharSetToTimeline()
 	for i=1,_frameCount do
 		if frameImages[i] ~= nil then
 			local outputCel = nil
-			if _overwriteCurrentLayer then sprite:deleteCel(outputLayer, i) end
+			if _overwriteCurrentLayer and outputLayer:cel(i) then sprite:deleteCel(outputLayer, i) end
 			outputCel = sprite:newCel(outputLayer, i)
 			outputCel.position = selectionOrigin
 			outputCel.image = CopyImage(frameImages[i], Rectangle(0, 0, _tileW, _tileH))
@@ -214,7 +214,7 @@ function TimelineToCharSet()
 	local outputLayer
 	if _overwriteCurrentLayer then
 		outputLayer = app.layer
-		sprite:deleteCel(outputLayer, 1)
+		if outputLayer:cel(1) then sprite:deleteCel(outputLayer, 1) end
 	else
 		local layerName = app.layer.name
 		outputLayer = sprite:newLayer()

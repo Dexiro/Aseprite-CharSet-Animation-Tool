@@ -1,6 +1,7 @@
 -- Tool to help with pulling together CharSet animations (by dex plushy)
 -- Features: 
 -- * Convert a timeline animation into a CharSet animation. Animation frames can be arranged on the spritesheet in a vertical or horizontal layout. 
+-- * Convert from CharSet animation to a timeline animation. 
 
 -- Shoutout to the Collective Unconscious YNFG community, hopefully this will help out with development! (https://ynoproject.net/unconscious/)
 
@@ -18,41 +19,66 @@ local _pathTileNumberSheet = _pathScriptFolder .. 'CharSet-Animation-Helper/data
 local dialog = Dialog("CharSet Animation Helper")
 
 local _dialogResetBounds
+local _hideCurrentLayer = true
+local _overwriteCurrentLayer = false
 local _frameLayoutType = 0
 local _selectionOK = false
 local _frameCount = 3
+
+local _tileW = 24
+local _tileH = 32
 
 local _layoutATileNumberImages = {}
 local _layoutBTileNumberImages = {}
 local _layoutTileNumH = 44
 local _layoutTileNumW = 33
 
-function CopyImage(fromImage, rect, colorMode)
-	local pixelsInRect = fromImage:pixels(rect)
-	local newImage = Image(rect.width, rect.height, colorMode)
+
+function ToStr_Rect(rect)
+	return ("[x" .. rect.x .. ":y" .. rect.y .. ":w" .. rect.width .. ":h" .. rect.height .. "]")
+end
+
+function GetTileRect(tileW, tileH, xIndex, yIndex, origin)
+	origin = origin or Point()
+	local xPos = (xIndex * tileW) + origin.x
+	local yPos = (yIndex * tileH) + origin.y
+	return Rectangle(xPos, yPos, tileW, tileH)
+end
+
+function CopyImage(srcImage, srcRect, dstRect)
+	dstRect = dstRect or Rectangle(0, 0, srcRect.width, srcRect.height)
+	local pixelsInRect = srcImage:pixels(srcRect)
+	local newImage = Image(dstRect.width, dstRect.height, srcImage.colorMode)
 	for it in pixelsInRect do
 		local pixelValue = it()
-		local px = it.x - rect.x
-		local py = it.y - rect.y
+		local px = (it.x - srcRect.x) + dstRect.x
+		local py = (it.y - srcRect.y) + dstRect.y
 		newImage:putPixel(px, py, pixelValue)
 	end
 	return newImage
 end
 
-function LoadTileNumImages(srcImage, yOffset)
-	local layoutTileImages = {}
-	for i=0,11 do
-		local rect = Rectangle(i*33, yOffset, 33, 44)
-		layoutTileImages[i+1] = CopyImage(srcImage, rect, colorMode)
+function GetRowFromTileset(srcImage, rowIndex, tileW, tileH, nTiles, origin)
+	origin = origin or Point(0,0)
+	local tileImages = {}
+	for i=0,nTiles do
+		tileImages[i+1] = CopyImage(srcImage, GetTileRect(tileW, tileH, i, rowIndex, origin))
 	end
-	return layoutTileImages
+	return tileImages
 end 
 
 function LoadTileNumImageSets()
 	local srcImage = Image{ fromFile=_pathTileNumberSheet }
-	
-	_layoutATileNumberImages = LoadTileNumImages(srcImage, 0)
-	_layoutBTileNumberImages = LoadTileNumImages(srcImage, 44)
+	local tileW, tileH, nTiles = 33, 44, 11
+	_layoutATileNumberImages = GetRowFromTileset(srcImage, 0, tileW, tileH, nTiles)
+	_layoutBTileNumberImages = GetRowFromTileset(srcImage, 1, tileW, tileH, nTiles)
+end
+
+function GetSelectionOrigin(sprite)
+	if sprite and sprite.selection then
+		return sprite.selection.origin
+	end
+	return Point()
 end
 
 function SelectRad_LayoutTypeA()
@@ -67,21 +93,20 @@ function SelectRad_LayoutTypeB()
 	RepaintDialog()
 end
 
-function CheckSelectionArea()
-	local selection = app.sprite.selection
-	if selection.bounds.width == 24 and selection.bounds.height == 32 then
-		_selectionOK = true
-		--dialog:modify{ id="label3", text="[Selection OK]" }
+function ToggleHideCurrentLayer()
+	_hideCurrentLayer = not _hideCurrentLayer
+end
+
+function ToggleOverwriteCurrentLayer()
+	_overwriteCurrentLayer = not _overwriteCurrentLayer
+	if _overwriteCurrentLayer then
+		dialog:modify{ id="btnhidelayer", enabled=false }
 	else
-		_selectionOK = false
-		--dialog:modify{ id="label3", text="[Selection Not OK]" }
+		dialog:modify{ id="btnhidelayer", enabled=true }
 	end
-	RepaintDialog()
-	return _selectionOK
 end
 
 function RepaintDialog()
-	--dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, 175, _dialogResetBounds.height + 45)
 	dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, 175, _dialogResetBounds.height + 50)
 	dialog:repaint()
 end
@@ -94,10 +119,8 @@ function UpdateCanvas(ev)
 	-- gc is a GraphicsContext
 	if _frameLayoutType == 0 then
 		gc:drawImage(_layoutATileNumberImages[_frameCount], 60, 0)
-		
 	else
 		gc:drawImage(_layoutBTileNumberImages[_frameCount], 60, 0)
-		--gc:drawImage(_layoutInfoImageB, 0, 0)
 	end
 end
 
@@ -106,58 +129,109 @@ function UpdateFrameCount()
 	RepaintDialog()
 end
 
-function RefreshCanvas()
-  --should be a nicer solution
-  app.command.Undo()
-  app.command.Redo()
+function CharSetToTimeline_Transaction()
+	app.transaction(CharSetToTimeline)
+	app.refresh()
 end
 
-function DoTheTransaction()
-	app.transaction(DoTheThing)
-	RefreshCanvas()
-end
-
-function DoTheThing()
-	local sprite = app.sprite
-	if CheckSelectionArea() == false then
-		app.alert("Invalid Selection Area")
-		return
+function GetXYIndexForFrame(frameIndex)
+	if _frameLayoutType == 0 then
+		xIndex = frameIndex % 3
+		yIndex = math.floor(frameIndex / 3)
+	else
+		yIndex = frameIndex % 4
+		xIndex = math.floor(frameIndex / 4)
 	end
+	return xIndex, yIndex
+end
+
+function TileWH()
+	return Point(_tileW, _tileH)
+end
+
+function CharSetToTimeline()
+	local sprite = app.sprite
+	local selectionOrigin = GetSelectionOrigin(sprite)
+	
+	-- Create a new Image with the same dimensions as the Sprite
+	-- We then want to copy the target Cel onto this image, using the Cel position as an offset
+	-- This should help to simplify a lot of the positioning calculations going forward
+	local charSetImage = Image(sprite.width, sprite.height, sprite.colorMode)
+	charSetImage:drawImage(app.cel.image, app.cel.position)
+	
+	local frameImages = {}
+	for i=1,_frameCount do
+		local frameIndex = i - 1
+		local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
+		local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
+		frameImages[i] = CopyImage(charSetImage, tileRect)
+	end
+	
+	if (not _overwriteCurrentLayer and _hideCurrentLayer) then app.layer.isVisible = false end
+	
+	local outputLayer
+	if _overwriteCurrentLayer then
+		outputLayer = app.layer
+	else
+		local layerName = app.layer.name
+		outputLayer = sprite:newLayer()
+		outputLayer.name = layerName .. "_Compiled"
+	end
+
+	for i=1,_frameCount do
+		if frameImages[i] ~= nil then
+			local outputCel = nil
+			if _overwriteCurrentLayer then sprite:deleteCel(outputLayer, i) end
+			outputCel = sprite:newCel(outputLayer, i)
+			outputCel.position = selectionOrigin
+			outputCel.image = CopyImage(frameImages[i], Rectangle(0, 0, _tileW, _tileH))
+		end 
+	end
+	
+end
+
+function TimelineToCharSet_Transaction()
+	app.transaction(TimelineToCharSet)
+	app.refresh()
+end
+
+function TimelineToCharSet()
+	local sprite = app.sprite
+	local selectionOrigin = GetSelectionOrigin(sprite)
+	
 	local layerCels = app.layer.cels
 	local frameImages = {}
 	for i=1,_frameCount do
 		if layerCels[i] ~= nil and layerCels[i].image ~= nil then
-			local sourceImage = Image(sprite.selection.bounds.width, sprite.selection.bounds.height, sprite.colorMode)
-			sourceImage:drawImage(layerCels[i].image, Point(layerCels[i].position.x, layerCels[i].position.y))
-			local frameImage = CopyImage(sourceImage, sprite.selection.bounds, sprite.colorMode)
-			frameImages[i] = frameImage
+			local sourceImage = Image(sprite.width, sprite.height, sprite.colorMode)
+			sourceImage:drawImage(layerCels[i].image, layerCels[i].position)
+			frameImages[i] = CopyImage(sourceImage, Rectangle(selectionOrigin.x, selectionOrigin.y, _tileW, _tileH))
 		end
 	end
 	
-	local layerName = app.layer.name
-	local outputLayer = sprite:newLayer()
-	outputLayer.name = layerName .. "_Compiled"
-	local newCel = sprite:newCel(outputLayer, 1)
-	local finalImage = Image(24 * 3, 32*4, colorMode)
+	if (not _overwriteCurrentLayer and _hideCurrentLayer) then app.layer.isVisible = false end
 	
+	local outputLayer
+	if _overwriteCurrentLayer then
+		outputLayer = app.layer
+		sprite:deleteCel(outputLayer, 1)
+	else
+		local layerName = app.layer.name
+		outputLayer = sprite:newLayer()
+		outputLayer.name = layerName .. "_Compiled"
+	end
+	local outputCel = sprite:newCel(outputLayer, 1)
+
+	local finalImage = Image(sprite.width, sprite.height, sprite.colorMode)
 	for i=1,_frameCount do
 		if frameImages[i] ~= nil then
-			frameImage = frameImages[i]
-			local xIndex = 0
-			local yIndex = 0
 			local frameIndex = i - 1
-			if _frameLayoutType == 0 then
-				xIndex = frameIndex % 3
-				yIndex = math.floor(frameIndex / 3)
-			else
-				yIndex = frameIndex % 4
-				xIndex = math.floor(frameIndex / 4)
-			end
-			finalImage:drawImage(frameImage, Point(xIndex * 24, yIndex * 32))
+			local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
+			local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
+			finalImage:drawImage(frameImages[i], Point(tileRect.x, tileRect.y))
 		end
 	end
-	newCel.image = finalImage
-	
+	outputCel.image = finalImage
 end
 
 LoadTileNumImageSets()
@@ -168,16 +242,25 @@ dialog:radio{ id="fl_radio2", text="Vertical (Spin)", selected=false, onclick=Se
 dialog:newrow()
 dialog:canvas{autoscaling=false, onpaint=UpdateCanvas}
 --dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, 175, dialog.bounds.height + 65)
-dialog:separator()
-dialog:label{id="label2", text="Selection area should be 24x32"}
+--dialog:separator()
+--dialog:label{id="label2", text="Selection area should be 24x32"}
 --dialog:newrow()
 --dialog:label{id="label3", text="[Selection Not Checked]"}
 --dialog:button{id="btncheck", text="Check", onclick=CheckSelectionArea}
 dialog:separator()
 dialog:label{id="label4", text="Number of Frames:"}
 dialog:slider{id="numframes", min=2, max=12, value=3, onchange=UpdateFrameCount}
+dialog:label{id="label4", text="Tile Size:"}
+dialog:number{id="tilewinput", text="".._tileW, decimals=0, onchange=function() _tileW=dialog.data["tilewinput"] end }
+dialog:number{id="tilehinput", text="".._tileH, decimals=0, onchange=function() _tileH=dialog.data["tilehinput"] end } 
 dialog:separator()
-dialog:button{id="btndothing", text="Do The Thing", onclick=DoTheTransaction}
+dialog:check{id="btnhidelayer", text="Hide Current Layer", onclick=ToggleHideCurrentLayer}
+dialog:newrow()
+dialog:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", onclick=ToggleOverwriteCurrentLayer}
+dialog:separator()
+dialog:button{id="btndothing", text="Timeline -> CharSet", onclick=TimelineToCharSet_Transaction}
+dialog:newrow()
+dialog:button{id="btndothing2", text="CharSet -> Timeline", onclick=CharSetToTimeline_Transaction}
 dialog:show{wait=false}
 _dialogResetBounds = Rectangle(dialog.bounds.x, dialog.bounds.y, dialog.bounds.width, dialog.bounds.height)
 CheckSelectionArea()

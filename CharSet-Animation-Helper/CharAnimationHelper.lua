@@ -149,6 +149,29 @@ function TileWH()
 	return Point(_tileW, _tileH)
 end
 
+function CreateFrames(frameCount)
+	local sprite = app.sprite
+	if frameCount <= 1 or #sprite.frames >= frameCount then return end
+	-- create empty frames
+	for i=2,frameCount do
+		if i > #sprite.frames then 
+			sprite:newEmptyFrame(i)
+			-- copy cels for non-selected layers into the new frames
+			for k,layer in ipairs(sprite.layers) do
+				if layer ~= app.layer then
+					local prevCel = layer:cel(i-1)
+					if prevCel then
+						local newCel = sprite:newCel(layer, i)
+						newCel.image = Image(prevCel.image)
+						newCel.position = prevCel.position
+					end
+				end
+			end
+			-- end of copy frames section
+		end
+	end
+end
+
 function CharSetToTimeline()
 	local sprite = app.sprite
 	local selectionOrigin = GetSelectionOrigin(sprite)
@@ -178,6 +201,7 @@ function CharSetToTimeline()
 		outputLayer.name = layerName .. "_Compiled"
 	end
 
+	CreateFrames(_frameCount)
 	for i=1,_frameCount do
 		if frameImages[i] ~= nil then
 			local outputCel = nil

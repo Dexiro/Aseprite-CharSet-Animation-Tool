@@ -16,13 +16,11 @@ local _pathTileNumberSheet = _pathScriptFolder .. 'CharSet-Animation-Helper/data
 -----------------------------------------------------------------
 -----------------------------------------------------------------
 
-local dialog = Dialog("CharSet Animation Helper")
+local _dlgList = {}
 
-local _dialogResetBounds
 local _hideCurrentLayer = true
 local _overwriteCurrentLayer = false
 local _frameLayoutType = 0
-local _selectionOK = false
 local _frameCount = 3
 
 local _tileW = 24
@@ -83,14 +81,14 @@ end
 
 function SelectRad_LayoutTypeA()
 	_frameLayoutType = 0
-	dialog:modify{ id="fl_radio2", selected=false }
-	RepaintDialog()
+	_dlgList[1].dlg:modify{ id="fl_radio2", selected=false }
+	RepaintDialog(1)
 end
 
 function SelectRad_LayoutTypeB()
 	_frameLayoutType = 1
-	dialog:modify{ id="fl_radio1", selected=false }
-	RepaintDialog()
+	_dlgList[1].dlg:modify{ id="fl_radio1", selected=false }
+	RepaintDialog(1)
 end
 
 function ToggleHideCurrentLayer()
@@ -100,15 +98,22 @@ end
 function ToggleOverwriteCurrentLayer()
 	_overwriteCurrentLayer = not _overwriteCurrentLayer
 	if _overwriteCurrentLayer then
-		dialog:modify{ id="btnhidelayer", enabled=false }
+		_dlgList[1].dlg:modify{ id="btnhidelayer", enabled=false }
 	else
-		dialog:modify{ id="btnhidelayer", enabled=true }
+		_dlgList[1].dlg:modify{ id="btnhidelayer", enabled=true }
 	end
 end
 
-function RepaintDialog()
-	dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, 175, _dialogResetBounds.height + 50)
-	dialog:repaint()
+function RepaintDialog(index)
+	if _dlgList[index] and _dlgList[index].dlg then
+		local dialog = _dlgList[index].dlg
+		if _dlgList[index].reset then
+			local reset = _dlgList[index].reset
+			dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, reset.x, reset.y)
+		end
+		dialog:repaint()
+	end
+	app.refresh()
 end
 
 function UpdateCanvas(ev)
@@ -125,8 +130,8 @@ function UpdateCanvas(ev)
 end
 
 function UpdateFrameCount()
-	_frameCount = dialog.data["numframes"]
-	RepaintDialog()
+	_frameCount = _dlgList[1].dlg.data["numframes"]
+	RepaintDialog(1)
 end
 
 function CharSetToTimeline_Transaction()
@@ -258,33 +263,41 @@ function TimelineToCharSet()
 	outputCel.image = finalImage
 end
 
-LoadTileNumImageSets()
+function CreateAnimConvertDialog(index)
+	dialog = Dialog("CharSet Animation Helper")
+		--:tab{ id="tab1", text="char/timeline", selected=true }		
+		:label{id="label1", text="Frame Layout:"}
+		:radio{ id="fl_radio1", text="Horizontal (Step)", selected=true, onclick=SelectRad_LayoutTypeA }
+		:radio{ id="fl_radio2", text="Vertical (Spin)", selected=false, onclick=SelectRad_LayoutTypeB }
+		:newrow()
+		:canvas{autoscaling=true, onpaint=UpdateCanvas}
+		:separator()
+		:label{id="label4", text="Number of Frames:"}
+		:slider{id="numframes", min=2, max=12, value=3, onchange=UpdateFrameCount}
+		:label{id="label4", text="Tile Size:"}
+		:number{id="tilewinput", text="".._tileW, decimals=0, onchange=function() _tileW=dialog.data["tilewinput"] end }
+		:number{id="tilehinput", text="".._tileH, decimals=0, onchange=function() _tileH=dialog.data["tilehinput"] end }
+		:separator()
+		:check{id="btnhidelayer", text="Hide Current Layer", onclick=ToggleHideCurrentLayer}
+		:newrow()
+		:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", onclick=ToggleOverwriteCurrentLayer}
+		:separator()
+		:button{id="btndothing", text="Timeline -> CharSet", onclick=TimelineToCharSet_Transaction}
+		:newrow()
+		:button{id="btndothing2", text="CharSet -> Timeline", onclick=CharSetToTimeline_Transaction}
+		--:endtabs{ id="tab1" } 
+		--:tab{ id="tab2", text="anim preview" }
+		--:endtabs{ id="tab2", selected=false } 
+		:show{wait=false}
+	_dlgList[index] = { dlg=dialog, reset=Point(dialog.bounds.width, dialog.bounds.height + (50 * app.uiScale)) }
+	return dialog
+end
 
-dialog:label{id="label1", text="Frame Layout:"}
-dialog:radio{ id="fl_radio1", text="Horizontal (Step)", selected=true, onclick=SelectRad_LayoutTypeA }
-dialog:radio{ id="fl_radio2", text="Vertical (Spin)", selected=false, onclick=SelectRad_LayoutTypeB }
-dialog:newrow()
-dialog:canvas{autoscaling=false, onpaint=UpdateCanvas}
---dialog.bounds = Rectangle(dialog.bounds.x, dialog.bounds.y, 175, dialog.bounds.height + 65)
---dialog:separator()
---dialog:label{id="label2", text="Selection area should be 24x32"}
---dialog:newrow()
---dialog:label{id="label3", text="[Selection Not Checked]"}
---dialog:button{id="btncheck", text="Check", onclick=CheckSelectionArea}
-dialog:separator()
-dialog:label{id="label4", text="Number of Frames:"}
-dialog:slider{id="numframes", min=2, max=12, value=3, onchange=UpdateFrameCount}
-dialog:label{id="label4", text="Tile Size:"}
-dialog:number{id="tilewinput", text="".._tileW, decimals=0, onchange=function() _tileW=dialog.data["tilewinput"] end }
-dialog:number{id="tilehinput", text="".._tileH, decimals=0, onchange=function() _tileH=dialog.data["tilehinput"] end } 
-dialog:separator()
-dialog:check{id="btnhidelayer", text="Hide Current Layer", onclick=ToggleHideCurrentLayer}
-dialog:newrow()
-dialog:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", onclick=ToggleOverwriteCurrentLayer}
-dialog:separator()
-dialog:button{id="btndothing", text="Timeline -> CharSet", onclick=TimelineToCharSet_Transaction}
-dialog:newrow()
-dialog:button{id="btndothing2", text="CharSet -> Timeline", onclick=CharSetToTimeline_Transaction}
-dialog:show{wait=false}
-_dialogResetBounds = Rectangle(dialog.bounds.x, dialog.bounds.y, dialog.bounds.width, dialog.bounds.height)
-RepaintDialog()
+LoadTileNumImageSets()
+CreateAnimConvertDialog(1)
+RepaintDialog(1)
+
+
+
+
+

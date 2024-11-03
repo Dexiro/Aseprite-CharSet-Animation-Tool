@@ -20,6 +20,7 @@ local _dlgList = {}
 
 local _hideCurrentLayer = true
 local _overwriteCurrentLayer = false
+local _steppyMode = false
 local _frameLayoutType = 0
 local _frameCount = 3
 
@@ -82,12 +83,14 @@ end
 function SelectRad_LayoutTypeA()
 	_frameLayoutType = 0
 	_dlgList[1].dlg:modify{ id="fl_radio2", selected=false }
+	CheckSteppyModeConditions()
 	RepaintDialog(1)
 end
 
 function SelectRad_LayoutTypeB()
 	_frameLayoutType = 1
 	_dlgList[1].dlg:modify{ id="fl_radio1", selected=false }
+	CheckSteppyModeConditions()
 	RepaintDialog(1)
 end
 
@@ -129,8 +132,20 @@ function UpdateCanvas(ev)
 	end
 end
 
+function CheckSteppyModeConditions()
+	local enabled = false
+	if _frameCount == 3 and _frameLayoutType == 0 then
+		if _steppyMode then enabled = true end
+		_dlgList[1].dlg:modify{ id="btnsteppymode", enabled=true }
+	else
+		_dlgList[1].dlg:modify{ id="btnsteppymode", enabled=false }
+	end
+	return enabled
+end
+
 function UpdateFrameCount()
 	_frameCount = _dlgList[1].dlg.data["numframes"]
+	CheckSteppyModeConditions()
 	RepaintDialog(1)
 end
 
@@ -180,7 +195,8 @@ end
 function CharSetToTimeline()
 	local sprite = app.sprite
 	local selectionOrigin = GetSelectionOrigin(sprite)
-	
+	local localFrameCount = _frameCount
+
 	-- Create a new Image with the same dimensions as the Sprite
 	-- We then want to copy the target Cel onto this image, using the Cel position as an offset
 	-- This should help to simplify a lot of the positioning calculations going forward
@@ -188,15 +204,20 @@ function CharSetToTimeline()
 	charSetImage:drawImage(app.cel.image, app.cel.position)
 	
 	local frameImages = {}
-	for i=1,_frameCount do
+	for i=1,localFrameCount do
 		local frameIndex = i - 1
 		local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
 		local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
 		frameImages[i] = CopyImage(charSetImage, tileRect)
 	end
 	
+	if CheckSteppyModeConditions() then
+		localFrameCount = localFrameCount + 1
+		frameImages[localFrameCount] = Image(frameImages[2])
+	end
+
 	if (not _overwriteCurrentLayer and _hideCurrentLayer) then app.layer.isVisible = false end
-	
+
 	local outputLayer
 	if _overwriteCurrentLayer then
 		outputLayer = app.layer
@@ -206,8 +227,8 @@ function CharSetToTimeline()
 		outputLayer.name = layerName .. "_Compiled"
 	end
 
-	CreateFrames(_frameCount)
-	for i=1,_frameCount do
+	CreateFrames(localFrameCount)
+	for i=1,localFrameCount do
 		if frameImages[i] ~= nil then
 			local outputCel = nil
 			if _overwriteCurrentLayer and outputLayer:cel(i) then sprite:deleteCel(outputLayer, i) end
@@ -281,6 +302,8 @@ function CreateAnimConvertDialog(index)
 		:check{id="btnhidelayer", text="Hide Current Layer", onclick=ToggleHideCurrentLayer}
 		:newrow()
 		:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", onclick=ToggleOverwriteCurrentLayer}
+		:newrow()
+		:check{id="btnsteppymode", text="Steppy Mode", onclick=function() _steppyMode = not _steppyMode end}
 		:separator()
 		:button{id="btndothing", text="Timeline -> CharSet", onclick=TimelineToCharSet_Transaction}
 		:newrow()

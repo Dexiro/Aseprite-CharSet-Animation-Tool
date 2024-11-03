@@ -18,7 +18,7 @@ local _pathTileNumberSheet = _pathScriptFolder .. 'CharSet-Animation-Helper/data
 
 local _dlgList = {}
 
-local _hideCurrentLayer = true
+local _hideCurrentLayer = false
 local _overwriteCurrentLayer = false
 local _steppyMode = false
 local _frameLayoutType = 0
@@ -31,6 +31,9 @@ local _layoutATileNumberImages = {}
 local _layoutBTileNumberImages = {}
 local _layoutTileNumH = 44
 local _layoutTileNumW = 33
+
+local _enableMultiLayer = false
+local _multiLayerConfig = {}
 
 
 function ToStr_Rect(rect)
@@ -149,12 +152,8 @@ function UpdateFrameCount()
 	RepaintDialog(1)
 end
 
-function CharSetToTimeline_Transaction()
-	app.transaction(CharSetToTimeline)
-	app.refresh()
-end
-
 function GetXYIndexForFrame(frameIndex)
+	local xIndex, yIndex
 	if _frameLayoutType == 0 then
 		xIndex = frameIndex % 3
 		yIndex = math.floor(frameIndex / 3)
@@ -178,13 +177,11 @@ function CreateFrames(frameCount)
 			sprite:newEmptyFrame(i)
 			-- copy cels for non-selected layers into the new frames
 			for k,layer in ipairs(sprite.layers) do
-				if layer ~= app.layer then
-					local prevCel = layer:cel(i-1)
-					if prevCel then
-						local newCel = sprite:newCel(layer, i)
-						newCel.image = Image(prevCel.image)
-						newCel.position = prevCel.position
-					end
+				local prevCel = layer:cel(i-1)
+				if prevCel then
+					local newCel = sprite:newCel(layer, i)
+					newCel.image = Image(prevCel.image)
+					newCel.position = prevCel.position
 				end
 			end
 			-- end of copy frames section
@@ -192,7 +189,32 @@ function CreateFrames(frameCount)
 	end
 end
 
-function CharSetToTimeline()
+function CharSetToTimeline_Transaction()
+	app.transaction(function()
+		if not _enableMultiLayer then
+			CharSetToTimeline(app.layer)
+		else
+			local layers = app.sprite.layers
+			for i=1, #layers do
+				local revI = #layers + 1 - i
+				local layer = layers[revI]
+				if _multiLayerConfig[revI] then
+					CharSetToTimeline(layer)
+				end
+			end
+		end
+	end)
+	app.refresh()
+end
+
+function CharSetToTimeline(targetLayer)
+	if not targetLayer then return end
+	local targetCel = targetLayer:cel(app.frame.frameNumber)
+	if not targetCel then
+		app.alert("No image on selected layer/frame")
+		return
+	end
+
 	local sprite = app.sprite
 	local selectionOrigin = GetSelectionOrigin(sprite)
 	local localFrameCount = _frameCount
@@ -201,7 +223,7 @@ function CharSetToTimeline()
 	-- We then want to copy the target Cel onto this image, using the Cel position as an offset
 	-- This should help to simplify a lot of the positioning calculations going forward
 	local charSetImage = Image(sprite.width, sprite.height, sprite.colorMode)
-	charSetImage:drawImage(app.cel.image, app.cel.position)
+	charSetImage:drawImage(targetCel.image, targetCel.position)
 	
 	local frameImages = {}
 	for i=1,localFrameCount do
@@ -209,6 +231,7 @@ function CharSetToTimeline()
 		local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
 		local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
 		frameImages[i] = CopyImage(charSetImage, tileRect)
+		charSetImage:clear(tileRect)
 	end
 	
 	if CheckSteppyModeConditions() then
@@ -220,36 +243,55 @@ function CharSetToTimeline()
 
 	local outputLayer
 	if _overwriteCurrentLayer then
-		outputLayer = app.layer
+		outputLayer = targetLayer
 	else
-		local layerName = app.layer.name
+		local layerName = targetLayer.name
 		outputLayer = sprite:newLayer()
 		outputLayer.name = layerName .. "_Compiled"
 	end
 
 	CreateFrames(localFrameCount)
 	for i=1,localFrameCount do
+		local outputCel = outputLayer:cel(i)
+		if not outputCel then outputCel = sprite:newCel(outputLayer, i) end
+
+		local finalImage = Image(sprite.width, sprite.height, sprite.colorMode)
+		finalImage:drawImage(outputCel.image, outputCel.position)
+		local tileRect = Rectangle(selectionOrigin.x, selectionOrigin.y, _tileW, _tileH)
+		finalImage:clear(tileRect)
 		if frameImages[i] ~= nil then
-			local outputCel = nil
-			if _overwriteCurrentLayer and outputLayer:cel(i) then sprite:deleteCel(outputLayer, i) end
-			outputCel = sprite:newCel(outputLayer, i)
-			outputCel.position = selectionOrigin
-			outputCel.image = CopyImage(frameImages[i], Rectangle(0, 0, _tileW, _tileH))
-		end 
+			finalImage:drawImage(frameImages[i], selectionOrigin)
+		end
+		outputCel.position = Point()
+		outputCel.image = finalImage
 	end
 	
 end
 
 function TimelineToCharSet_Transaction()
-	app.transaction(TimelineToCharSet)
+	app.transaction(function()
+		if not _enableMultiLayer then
+			TimelineToCharSet(app.layer)
+		else
+			local layers = app.sprite.layers
+			for i=1, #layers do
+				local revI = #layers + 1 - i
+				local layer = layers[revI]
+				if _multiLayerConfig[revI] then
+					TimelineToCharSet(layer)
+				end
+			end
+		end
+	end)
 	app.refresh()
 end
 
-function TimelineToCharSet()
+function TimelineToCharSet(targetLayer)
+	if not targetLayer then return end
 	local sprite = app.sprite
 	local selectionOrigin = GetSelectionOrigin(sprite)
 	
-	local layerCels = app.layer.cels
+	local layerCels = targetLayer.cels
 	local frameImages = {}
 	for i=1,_frameCount do
 		if layerCels[i] ~= nil and layerCels[i].image ~= nil then
@@ -263,26 +305,72 @@ function TimelineToCharSet()
 	
 	local outputLayer
 	if _overwriteCurrentLayer then
-		outputLayer = app.layer
-		if outputLayer:cel(1) then sprite:deleteCel(outputLayer, 1) end
+		outputLayer = targetLayer
 	else
-		local layerName = app.layer.name
+		local layerName = targetLayer.name
 		outputLayer = sprite:newLayer()
 		outputLayer.name = layerName .. "_Compiled"
 	end
-	local outputCel = sprite:newCel(outputLayer, 1)
+	local outputCel = outputLayer:cel(1)
+	if not outputCel then outputCel = sprite:newCel(outputLayer, 1) end
 
 	local finalImage = Image(sprite.width, sprite.height, sprite.colorMode)
+	finalImage:drawImage(outputCel.image, outputCel.position)
 	for i=1,_frameCount do
 		if frameImages[i] ~= nil then
 			local frameIndex = i - 1
 			local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
 			local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
+			finalImage:clear(tileRect)
 			finalImage:drawImage(frameImages[i], Point(tileRect.x, tileRect.y))
 		end
 	end
+	outputCel.position = Point()
 	outputCel.image = finalImage
+	--outputCel.image:shrinkBounds()
 end
+
+function CreateMultiLayerDialog(parentDlg)
+	if not parentDlg then
+		app.alert("aaaaa")
+	end
+
+	layerDlg = Dialog{ title="Multi-Layer Options", parent=parentDlg}
+		:check{id="btnenablem", text="Enable Multi-Layer Mode", selected=_enableMultiLayer, onclick=function()
+			_enableMultiLayer = not _enableMultiLayer
+			local layers = app.sprite.layers
+			for i=1, #layers do
+				local revI = #layers + 1 - i
+				layerDlg:modify{id="btnmlayer" .. revI, enabled=_enableMultiLayer}
+			end
+			end }
+		:separator()
+
+	local layers = app.sprite.layers
+	for i=1, #layers do
+		local revI = #layers + 1 - i
+		local layer = layers[revI]
+		
+		_multiLayerConfig[revI] = _multiLayerConfig[revI] or false
+		local text = revI .. " - " .. layer.name
+
+		if layer == app.layer then
+			text = revI .. " - " .. layer.name .. " (selected)"
+		else
+
+		end
+		layerDlg:check{id="btnmlayer" .. revI, text=text, enabled=_enableMultiLayer, selected=_multiLayerConfig[revI], onclick=function() _multiLayerConfig[revI] = not _multiLayerConfig[revI] end }
+		layerDlg:newrow()
+	end
+
+	layerDlg:separator()
+		:button{id="btnmconfirm", text="Confirm", onclick=function() layerDlg:close() end}
+		--:button{id="btnmcancel", text="Cancel", onclick=function() layerDlg:close() end}
+		
+	layerDlg:show{wait=true, autoscrollbars=true}
+	return layerDlg
+end
+
 
 function CreateAnimConvertDialog(index)
 	dialog = Dialog("CharSet Animation Helper")
@@ -299,11 +387,13 @@ function CreateAnimConvertDialog(index)
 		:number{id="tilewinput", text="".._tileW, decimals=0, onchange=function() _tileW=dialog.data["tilewinput"] end }
 		:number{id="tilehinput", text="".._tileH, decimals=0, onchange=function() _tileH=dialog.data["tilehinput"] end }
 		:separator()
-		:check{id="btnhidelayer", text="Hide Current Layer", onclick=ToggleHideCurrentLayer}
+		:check{id="btnhidelayer", text="Hide Current Layer", selected=_hideCurrentLayer, onclick=ToggleHideCurrentLayer}
 		:newrow()
-		:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", onclick=ToggleOverwriteCurrentLayer}
+		:check{id="btnoverwritelayer", text="Overwrite Current Layer [!!]", selected=_overwriteCurrentLayer, onclick=ToggleOverwriteCurrentLayer}
 		:newrow()
 		:check{id="btnsteppymode", text="Steppy Mode", onclick=function() _steppyMode = not _steppyMode end}
+		:separator()
+		:button{id="btnmultilayer", text="Multi-Layer Mode", onclick=function() CreateMultiLayerDialog(dialog) end}
 		:separator()
 		:button{id="btndothing", text="Timeline -> CharSet", onclick=TimelineToCharSet_Transaction}
 		:newrow()

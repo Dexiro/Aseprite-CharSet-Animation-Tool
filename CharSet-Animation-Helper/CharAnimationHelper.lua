@@ -136,14 +136,19 @@ function UpdateCanvas(ev)
 end
 
 function CheckSteppyModeConditions()
-	local enabled = false
-	if _frameCount == 3 and _frameLayoutType == 0 then
-		if _steppyMode then enabled = true end
-		_dlgList[1].dlg:modify{ id="btnsteppymode", enabled=true }
+	local steppy, bigsteppy = false, false
+	local buttonText = "Steppy Mode"
+	if  _frameCount == 12 then buttonText = "Big Steppy Mode" end
+	if _frameLayoutType == 0 and (_frameCount == 3 or _frameCount == 12 ) then
+		if _steppyMode then 
+			if _frameCount == 3 then steppy = true end
+			if _frameCount == 12 then bigsteppy = true end
+		end
+		_dlgList[1].dlg:modify{ id="btnsteppymode", text=buttonText, enabled=true }
 	else
-		_dlgList[1].dlg:modify{ id="btnsteppymode", enabled=false }
+		_dlgList[1].dlg:modify{ id="btnsteppymode", text=buttonText, enabled=false }
 	end
-	return enabled
+	return steppy, bigsteppy
 end
 
 function UpdateFrameCount()
@@ -219,24 +224,38 @@ function CharSetToTimeline(targetLayer)
 	local selectionOrigin = GetSelectionOrigin(sprite)
 	local localFrameCount = _frameCount
 
+	local steppyMode, bigSteppyMode = CheckSteppyModeConditions()
+	if steppyMode then localFrameCount = localFrameCount + 1 end
+	if bigSteppyMode then localFrameCount = localFrameCount + 8 end
+
 	-- Create a new Image with the same dimensions as the Sprite
 	-- We then want to copy the target Cel onto this image, using the Cel position as an offset
 	-- This should help to simplify a lot of the positioning calculations going forward
 	local charSetImage = Image(sprite.width, sprite.height, sprite.colorMode)
 	charSetImage:drawImage(targetCel.image, targetCel.position)
-	
+
 	local frameImages = {}
+	local steppyOffset = 0
+	local steppyCount = 0
+	local skipIterations = 0
 	for i=1,localFrameCount do
-		local frameIndex = i - 1
-		local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
-		local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
-		frameImages[i] = CopyImage(charSetImage, tileRect)
-		charSetImage:clear(tileRect)
-	end
-	
-	if CheckSteppyModeConditions() then
-		localFrameCount = localFrameCount + 1
-		frameImages[localFrameCount] = Image(frameImages[2])
+		if skipIterations > 0 then
+			skipIterations = skipIterations - 1
+		else
+			if (steppyMode or bigSteppyMode) and ((i - steppyCount) % 4 == 0) then
+				frameImages[i] = Image(frameImages[i-2])
+				frameImages[i+1] = Image(frameImages[i-3])
+				steppyOffset = steppyOffset + 2
+				skipIterations = 1
+				steppyCount = steppyCount + 1
+			else
+				local frameIndex = (i - 1) - steppyOffset
+				local xIndex, yIndex = GetXYIndexForFrame(frameIndex)
+				local tileRect = GetTileRect(_tileW, _tileH, xIndex, yIndex, selectionOrigin)
+				frameImages[i] = CopyImage(charSetImage, tileRect)
+				charSetImage:clear(tileRect)
+			end
+		end
 	end
 
 	if (not _overwriteCurrentLayer and _hideCurrentLayer) then app.layer.isVisible = false end
@@ -265,7 +284,7 @@ function CharSetToTimeline(targetLayer)
 		outputCel.position = Point()
 		outputCel.image = finalImage
 	end
-	
+	RepaintDialog(1)
 end
 
 function TimelineToCharSet_Transaction()
@@ -291,13 +310,31 @@ function TimelineToCharSet(targetLayer)
 	local sprite = app.sprite
 	local selectionOrigin = GetSelectionOrigin(sprite)
 	
+	local localFrameCount = _frameCount
+	local steppyMode, bigSteppyMode = CheckSteppyModeConditions()
+	if steppyMode then localFrameCount = localFrameCount + 1 end
+	if bigSteppyMode then localFrameCount = localFrameCount + 8 end
+
 	local layerCels = targetLayer.cels
 	local frameImages = {}
-	for i=1,_frameCount do
-		if layerCels[i] ~= nil and layerCels[i].image ~= nil then
-			local sourceImage = Image(sprite.width, sprite.height, sprite.colorMode)
-			sourceImage:drawImage(layerCels[i].image, layerCels[i].position)
-			frameImages[i] = CopyImage(sourceImage, Rectangle(selectionOrigin.x, selectionOrigin.y, _tileW, _tileH))
+	local steppyOffset = 0
+	local steppyCount = 0
+	local skipIterations = 0
+	for i=1,localFrameCount do
+		if skipIterations > 0 then
+			skipIterations = skipIterations - 1
+		else
+			if (steppyMode or bigSteppyMode) and ((i - steppyCount) % 4 == 0) then
+				steppyOffset = steppyOffset + 2
+				skipIterations = skipIterations + 1
+				steppyCount = steppyCount + 1
+			else
+				if layerCels[i] ~= nil and layerCels[i].image ~= nil then
+					local sourceImage = Image(sprite.width, sprite.height, sprite.colorMode)
+					sourceImage:drawImage(layerCels[i].image, layerCels[i].position)
+					frameImages[i - steppyOffset] = CopyImage(sourceImage, Rectangle(selectionOrigin.x, selectionOrigin.y, _tileW, _tileH))
+				end
+			end
 		end
 	end
 	
@@ -327,7 +364,7 @@ function TimelineToCharSet(targetLayer)
 	end
 	outputCel.position = Point()
 	outputCel.image = finalImage
-	--outputCel.image:shrinkBounds()
+	RepaintDialog(1)
 end
 
 function CreateMultiLayerDialog(parentDlg)
